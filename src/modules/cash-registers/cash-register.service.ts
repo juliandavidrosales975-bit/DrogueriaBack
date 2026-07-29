@@ -68,12 +68,15 @@ export class CashRegisterService {
 
     const register = mapRegister(data);
     const salesSoFar = await this.salesSince(storeId, register.openedAt);
+    const cogsSoFar = await this.cogsForSales(salesSoFar.saleIds);
 
     return {
       ...register,
       salesTotalSoFar: salesSoFar.total,
       cashSalesTotalSoFar: salesSoFar.cashTotal,
       salesCountSoFar: salesSoFar.count,
+      cogsTotalSoFar: cogsSoFar,
+      profitTotalSoFar: cogsSoFar === null ? null : salesSoFar.total - cogsSoFar,
     };
   }
 
@@ -99,7 +102,7 @@ export class CashRegisterService {
   private async salesSince(storeId: string, sinceIso: string, untilIso?: string) {
     let query = this.client
       .from('sales')
-      .select('total, payment_method', { count: 'exact' })
+      .select('id, total, payment_method', { count: 'exact' })
       .eq('store_id', storeId)
       .eq('status', 'CONFIRMED')
       .gte('created_at', sinceIso);
@@ -111,13 +114,56 @@ export class CashRegisterService {
     const { data, error, count } = await query;
     throwIfError(error);
 
-    const total = (data || []).reduce((sum: number, row: any) => sum + Number(row.total), 0);
+    const rows = (data ?? []) as unknown as Array<{ id: string; total: number; payment_method: string }>;
+
+    const total = rows.reduce((sum, row) => sum + Number(row.total), 0);
     // Solo las ventas en EFECTIVO afectan el efectivo físico esperado en caja.
     // Las pagadas con tarjeta/transferencia no entran ni salen del cajón.
-    const cashTotal = (data || [])
-      .filter((row: any) => row.payment_method === 'CASH')
-      .reduce((sum: number, row: any) => sum + Number(row.total), 0);
-    return { total, cashTotal, count: count ?? (data || []).length };
+    const cashTotal = rows
+      .filter((row) => row.payment_method === 'CASH')
+      .reduce((sum, row) => sum + Number(row.total), 0);
+
+    return {
+      total,
+      cashTotal,
+      count: count ?? rows.length,
+      saleIds: rows.map((row) => row.id),
+    };
+  }
+
+  /**
+   * Costo de los productos vendidos (COGS) de un conjunto de ventas.
+   * Usa el costo congelado en cada línea (sale_items.unit_cost, migración 016)
+   * y cae al costo actual del producto para ventas anteriores a esa migración.
+   *
+   * Devuelve null si no se puede calcular (por ejemplo, si la migración 016 aún
+   * no se aplicó): así el cierre de caja nunca falla por esto.
+   */
+  private async cogsForSales(saleIds: string[]): Promise<number | null> {
+    if (saleIds.length === 0) return 0;
+
+    try {
+      const { data, error } = await this.client
+        .from('sale_items')
+        .select('quantity, unit_cost, products(cost)')
+        .in('sale_id', saleIds);
+
+      if (error) throw new Error(error.message);
+
+      const items = (data ?? []) as unknown as Array<{
+        quantity: number;
+        unit_cost: number | null;
+        products?: { cost: number } | null;
+      }>;
+
+      return items.reduce((sum, item) => {
+        const unitCost = Number(item.unit_cost) || Number(item.products?.cost) || 0;
+        return sum + Number(item.quantity) * unitCost;
+      }, 0);
+    } catch (err: any) {
+      console.warn('⚠️  No se pudo calcular el costo de lo vendido del turno:', err.message);
+      return null;
+    }
   }
 
   async open(input: OpenCashRegisterInput) {
@@ -165,11 +211,16 @@ export class CashRegisterService {
     }
 
     const closedAt = new Date().toISOString();
-    const { total: salesTotal, cashTotal: cashSalesTotal, count: salesCount } = await this.salesSince(
-      input.storeId,
-      current.openedAt,
-      closedAt,
-    );
+    const {
+      total: salesTotal,
+      cashTotal: cashSalesTotal,
+      count: salesCount,
+      saleIds,
+    } = await this.salesSince(input.storeId, current.openedAt, closedAt);
+
+    // Rentabilidad del turno: Utilidad = Ventas - Costo de lo vendido
+    const cogsTotal = await this.cogsForSales(saleIds);
+    const profitTotal = cogsTotal === null ? null : salesTotal - cogsTotal;
 
     // El efectivo esperado en el cajón solo suma las ventas pagadas en EFECTIVO.
     // Ventas con tarjeta/transferencia se incluyen en salesTotal (para reportes)
@@ -203,9 +254,21 @@ export class CashRegisterService {
       description: `Cierre de caja. Ventas del turno: ${salesTotal}`,
       userId: input.actorUserId,
       ipAddress: input.ipAddress,
-      metadata: { closingAmount: input.closingAmount, expectedAmount, difference, salesTotal, salesCount },
+      metadata: {
+        closingAmount: input.closingAmount,
+        expectedAmount,
+        difference,
+        salesTotal,
+        salesCount,
+        cogsTotal,
+        profitTotal,
+      },
     });
 
-    return this.fetchById(current.id);
+    const register = await this.fetchById(current.id);
+
+    // El COGS no se persiste en cash_registers: se devuelve calculado para el
+    // resumen que se muestra al cerrar el turno.
+    return { ...register, cogsTotal, profitTotal };
   }
 }
