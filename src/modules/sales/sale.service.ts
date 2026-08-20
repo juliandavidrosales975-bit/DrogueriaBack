@@ -20,6 +20,9 @@ type SaleInput = {
   tax?: number;
   discount?: number;
   paymentMethod?: PaymentMethod;
+  paymentMethod2?: PaymentMethod | null;
+  amountPaid1?: number | null;
+  amountPaid2?: number | null;
   items: SaleItemInput[];
   actorUserId: string;
   ipAddress?: string;
@@ -84,6 +87,9 @@ export class SaleService {
       p_discount: input.discount ?? 0,
       p_store_id: input.storeId,
       p_payment_method: input.paymentMethod ?? 'CASH',
+      p_payment_method_2: input.paymentMethod2 || null,
+      p_amount_paid_1: input.amountPaid1 ?? null,
+      p_amount_paid_2: input.amountPaid2 ?? null,
       p_items: input.items.map((item) => ({
         productId: item.productId,
         unitQuantity: item.quantity,

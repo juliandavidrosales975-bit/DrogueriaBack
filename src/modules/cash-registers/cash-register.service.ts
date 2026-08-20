@@ -102,7 +102,7 @@ export class CashRegisterService {
   private async salesSince(storeId: string, sinceIso: string, untilIso?: string) {
     let query = this.client
       .from('sales')
-      .select('id, total, payment_method', { count: 'exact' })
+      .select('id, total, payment_method, payment_method_2, amount_paid_1, amount_paid_2', { count: 'exact' })
       .eq('store_id', storeId)
       .neq('status', 'CANCELLED')
       .gte('created_at', sinceIso);
@@ -114,7 +114,14 @@ export class CashRegisterService {
     const { data, error, count } = await query;
     throwIfError(error);
 
-    const rows = (data ?? []) as unknown as Array<{ id: string; total: number; payment_method: string }>;
+    const rows = (data ?? []) as unknown as Array<{
+      id: string;
+      total: number;
+      payment_method: string;
+      payment_method_2?: string | null;
+      amount_paid_1?: number | null;
+      amount_paid_2?: number | null;
+    }>;
 
     // Consultar devoluciones realizadas durante el turno para descontar el efectivo reintegrado
     let returnsQuery = this.client
@@ -131,9 +138,20 @@ export class CashRegisterService {
     const refundsTotal = (returnsData ?? []).reduce((sum: number, r: any) => sum + Number(r.total_refund || 0), 0);
 
     const rawTotal = rows.reduce((sum, row) => sum + Number(row.total), 0);
-    const rawCashTotal = rows
-      .filter((row) => row.payment_method === 'CASH')
-      .reduce((sum, row) => sum + Number(row.total), 0);
+    const rawCashTotal = rows.reduce((sum, row) => {
+      let cash = 0;
+      if (row.payment_method_2) {
+        if (row.payment_method === 'CASH') {
+          cash += Number(row.amount_paid_1 ?? 0);
+        }
+        if (row.payment_method_2 === 'CASH') {
+          cash += Number(row.amount_paid_2 ?? 0);
+        }
+      } else if (row.payment_method === 'CASH') {
+        cash += Number(row.total);
+      }
+      return sum + cash;
+    }, 0);
 
     const total = Math.max(0, rawTotal - refundsTotal);
     // Solo las ventas en EFECTIVO afectan el efectivo físico esperado en caja menos los reembolsos
