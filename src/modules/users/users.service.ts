@@ -223,6 +223,26 @@ export class UsersService {
       }
     }
 
+    // Un usuario con historial no se puede borrar: sus turnos de caja, ventas y
+    // compras lo referencian y son la trazabilidad de quién hizo cada operación.
+    // En ese caso se sugiere deshabilitarlo (le quita el acceso, conserva el histórico).
+    const refs = await this.usersRepo.countReferences(id);
+    if (refs.total > 0) {
+      const detail = [
+        refs.cashRegisters ? `${refs.cashRegisters} turno(s) de caja` : null,
+        refs.sales ? `${refs.sales} venta(s)` : null,
+        refs.purchases ? `${refs.purchases} compra(s)` : null,
+        refs.supplierPayments ? `${refs.supplierPayments} pago(s) a proveedor` : null,
+      ]
+        .filter(Boolean)
+        .join(', ');
+
+      throw ApiError.badRequest(
+        `No se puede eliminar a ${existing.fullName}: tiene ${detail} registrados en el sistema. Deshabilita el usuario para quitarle el acceso sin borrar el histórico.`,
+        [{ code: 'USER_HAS_HISTORY', references: refs }],
+      );
+    }
+
     await this.usersRepo.delete(id);
 
     await createAuditLog({

@@ -40,7 +40,7 @@ export class SaleService {
       .from('sales')
       .select(
         `*, customers(full_name), users(full_name),
-         sale_items(id, product_id, quantity, unit_price, line_total, unit_label, unit_factor, unit_quantity, products(name))`
+         sale_items(id, product_id, quantity, unit_price, unit_cost, line_total, unit_label, unit_factor, unit_quantity, products(name))`
       )
       .eq('store_id', storeId);
 

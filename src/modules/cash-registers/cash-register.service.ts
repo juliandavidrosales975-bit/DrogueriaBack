@@ -104,7 +104,7 @@ export class CashRegisterService {
       .from('sales')
       .select('id, total, payment_method', { count: 'exact' })
       .eq('store_id', storeId)
-      .eq('status', 'CONFIRMED')
+      .neq('status', 'CANCELLED')
       .gte('created_at', sinceIso);
 
     if (untilIso) {
@@ -116,16 +116,33 @@ export class CashRegisterService {
 
     const rows = (data ?? []) as unknown as Array<{ id: string; total: number; payment_method: string }>;
 
-    const total = rows.reduce((sum, row) => sum + Number(row.total), 0);
-    // Solo las ventas en EFECTIVO afectan el efectivo físico esperado en caja.
-    // Las pagadas con tarjeta/transferencia no entran ni salen del cajón.
-    const cashTotal = rows
+    // Consultar devoluciones realizadas durante el turno para descontar el efectivo reintegrado
+    let returnsQuery = this.client
+      .from('sale_returns')
+      .select('total_refund')
+      .eq('store_id', storeId)
+      .gte('created_at', sinceIso);
+
+    if (untilIso) {
+      returnsQuery = returnsQuery.lte('created_at', untilIso);
+    }
+
+    const { data: returnsData } = await returnsQuery;
+    const refundsTotal = (returnsData ?? []).reduce((sum: number, r: any) => sum + Number(r.total_refund || 0), 0);
+
+    const rawTotal = rows.reduce((sum, row) => sum + Number(row.total), 0);
+    const rawCashTotal = rows
       .filter((row) => row.payment_method === 'CASH')
       .reduce((sum, row) => sum + Number(row.total), 0);
+
+    const total = Math.max(0, rawTotal - refundsTotal);
+    // Solo las ventas en EFECTIVO afectan el efectivo físico esperado en caja menos los reembolsos
+    const cashTotal = Math.max(0, rawCashTotal - refundsTotal);
 
     return {
       total,
       cashTotal,
+      refundsTotal,
       count: count ?? rows.length,
       saleIds: rows.map((row) => row.id),
     };

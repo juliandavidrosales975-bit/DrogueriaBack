@@ -1,5 +1,6 @@
 import { getSupabaseClient, throwIfError } from '@core/database/connection';
 import { generateId } from '@shared/utils/cuid';
+import { ApiError } from '@shared/errors/ApiError';
 
 export type UserRecord = {
   id: string;
@@ -154,9 +155,61 @@ export class UsersRepository {
     return updated;
   }
 
+  /**
+   * Cuenta el historial operativo de un usuario. Esos registros (turnos de caja,
+   * ventas, compras, pagos a proveedores) apuntan al usuario con llaves foráneas
+   * y NO deben borrarse: son el rastro de quién hizo cada operación.
+   */
+  async countReferences(id: string): Promise<{
+    cashRegisters: number;
+    sales: number;
+    purchases: number;
+    supplierPayments: number;
+    total: number;
+  }> {
+    const countOf = async (table: string, filter: (q: any) => any): Promise<number> => {
+      try {
+        const { count, error } = await filter(
+          this.client.from(table).select('id', { count: 'exact', head: true }),
+        );
+        if (error) return 0;
+        return count ?? 0;
+      } catch {
+        return 0;
+      }
+    };
+
+    const [cashRegisters, sales, purchases, supplierPayments] = await Promise.all([
+      countOf('cash_registers', (q: any) =>
+        q.or(`opened_by_user_id.eq.${id},closed_by_user_id.eq.${id}`),
+      ),
+      countOf('sales', (q: any) => q.eq('user_id', id)),
+      countOf('purchases', (q: any) => q.eq('user_id', id)),
+      countOf('supplier_payments', (q: any) => q.eq('user_id', id)),
+    ]);
+
+    return {
+      cashRegisters,
+      sales,
+      purchases,
+      supplierPayments,
+      total: cashRegisters + sales + purchases + supplierPayments,
+    };
+  }
+
   async delete(id: string): Promise<void> {
     await this.client.from('refresh_tokens').update({ is_revoked: true }).eq('user_id', id);
     const { error } = await this.client.from('users').delete().eq('id', id);
+
+    // 23503 = foreign_key_violation. Ocurre cuando el usuario tiene historial
+    // (turnos de caja, ventas, compras…) que referencia su id.
+    if (error && (error as any).code === '23503') {
+      throw ApiError.badRequest(
+        'No se puede eliminar el usuario porque tiene historial registrado en el sistema (turnos de caja, ventas o compras). Deshabilítalo para quitarle el acceso sin perder el histórico.',
+        [{ code: 'USER_HAS_HISTORY' }],
+      );
+    }
+
     throwIfError(error);
   }
 

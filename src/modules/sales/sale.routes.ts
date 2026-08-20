@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import { SaleService } from './sale.service';
+import { ReturnService } from './return.service';
 import { requireAuth, authorize } from '@shared/middlewares/auth.middleware';
 import { ApiError } from '@shared/errors/ApiError';
 import { ALL_BUSINESS_ROLES, OPERATOR_ROLES } from '@shared/utils/roles';
 
 const saleRouter: Router = Router();
 const saleService = new SaleService();
+const returnService = new ReturnService();
 
 saleRouter.use(requireAuth, authorize(...ALL_BUSINESS_ROLES));
 
@@ -39,4 +41,28 @@ saleRouter.post('/', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// Registrar devolución parcial o total de una venta
+saleRouter.post('/:id/returns', async (req, res, next) => {
+  try {
+    const data = await returnService.create({
+      saleId: req.params.id as string,
+      notes: req.body.notes,
+      items: req.body.items,
+      actorUserId: req.user!.id,
+      ipAddress: req.ip,
+      storeId: getStoreId(req),
+    });
+    res.status(201).json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
+// Listar historial de devoluciones de una venta
+saleRouter.get('/:id/returns', async (req, res, next) => {
+  try {
+    const data = await returnService.listBySale(req.params.id as string, getStoreId(req));
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
 export { saleRouter };
+
