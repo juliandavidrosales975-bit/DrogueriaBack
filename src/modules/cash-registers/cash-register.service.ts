@@ -275,10 +275,8 @@ export class CashRegisterService {
     const cogsTotal = await this.cogsForSales(saleIds);
     const profitTotal = cogsTotal === null ? null : salesTotal - cogsTotal;
 
-    // El efectivo esperado en el cajón solo suma las ventas pagadas en EFECTIVO.
-    // Ventas con tarjeta/transferencia se incluyen en salesTotal (para reportes)
-    // pero no mueven el efectivo físico.
-    const expectedAmount = current.openingAmount + cashSalesTotal;
+    // El total esperado en caja suma el monto de apertura más el total de ventas del turno
+    const expectedAmount = current.openingAmount + salesTotal;
     const difference = input.closingAmount - expectedAmount;
 
     const { error } = await this.client

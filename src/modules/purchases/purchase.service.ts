@@ -4,7 +4,8 @@ import { createAuditLog } from '@shared/utils/audit';
 import { generateId } from '@shared/utils/cuid';
 
 type PurchaseItemInput = {
-  productId: string;
+  productId?: string | null;
+  customName?: string | null;
   quantity: number;
   unitCost: number;
   unitFactor?: number;
@@ -21,12 +22,14 @@ export type PurchasePaymentStatus = 'PAID' | 'PARTIAL' | 'PENDING';
 export type PaymentMethod = 'CASH' | 'CARD' | 'TRANSFER' | 'OTHER';
 
 type PurchaseInput = {
-  supplierId: string;
+  supplierId?: string | null;
   invoiceNumber?: string;
   notes?: string;
   tax?: number;
   items: PurchaseItemInput[];
   paymentStatus?: PurchasePaymentStatus;
+  paymentMethod?: PaymentMethod;
+  isExternal?: boolean;
   amountPaid?: number;
   actorUserId: string;
   ipAddress?: string;
@@ -40,11 +43,13 @@ type UpdatePurchaseInput = PurchaseInput & {
 /** Fila mínima de `purchases` usada para cálculos de saldo y validaciones */
 type PurchaseBalanceRow = {
   id: string;
-  supplier_id: string;
+  supplier_id?: string | null;
   status: string;
   total: number;
   amount_paid: number;
   payment_status: PurchasePaymentStatus;
+  payment_method?: PaymentMethod;
+  is_external?: boolean;
   suppliers?: { business_name: string } | null;
 };
 
@@ -65,7 +70,7 @@ type RegisterPaymentInput = {
  * misma forma y pueda reconstruir la compra en el modal de edición.
  */
 const PURCHASE_SELECT = `*, suppliers(business_name), users(full_name),
-   purchase_items(id, product_id, product_unit_id, quantity, unit_cost, line_total, unit_label, unit_factor, unit_quantity, sale_price, products(name, sku)),
+   purchase_items(id, product_id, custom_name, product_unit_id, quantity, unit_cost, line_total, unit_label, unit_factor, unit_quantity, sale_price, products(name, sku)),
    supplier_payments(id, amount, payment_method, note, created_at)`;
 
 export class PurchaseService {
@@ -76,7 +81,8 @@ export class PurchaseService {
   /** Normaliza los ítems al formato JSONB que esperan las RPC de Postgres */
   private mapItems(items: PurchaseItemInput[]) {
     return items.map((item) => ({
-      productId: item.productId,
+      productId: item.productId || null,
+      customName: item.customName || null,
       unitQuantity: item.quantity,
       unitCost: item.unitCost,
       unitFactor: item.unitFactor ?? 1,
@@ -91,14 +97,14 @@ export class PurchaseService {
       throw ApiError.badRequest('La compra debe incluir al menos un ítem');
     }
     for (const item of items) {
-      if (!item.productId) {
-        throw ApiError.badRequest('Cada ítem debe tener un producto');
+      if (!item.productId && !item.customName?.trim()) {
+        throw ApiError.badRequest('Cada ítem debe tener un producto del inventario o un nombre de compra externa');
       }
       if (!item.quantity || item.quantity <= 0) {
         throw ApiError.badRequest('La cantidad de cada ítem debe ser mayor a 0');
       }
       if (item.unitCost === undefined || item.unitCost === null || item.unitCost < 0) {
-        throw ApiError.badRequest('El costo de cada ítem no puede ser negativo');
+        throw ApiError.badRequest('El costo unitario no puede ser negativo');
       }
       if (item.salePrice !== undefined && item.salePrice !== null && item.salePrice < 0) {
         throw ApiError.badRequest('El precio de venta no puede ser negativo');
@@ -136,14 +142,15 @@ export class PurchaseService {
     const bySupplier = new Map<string, { supplierId: string; supplierName: string; balance: number; purchaseCount: number }>();
     for (const row of rows) {
       const balance = Number(row.total) - Number(row.amount_paid);
-      const existing = bySupplier.get(row.supplier_id);
+      const supplierId = row.supplier_id ?? 'unknown';
+      const existing = bySupplier.get(supplierId);
       const supplierName = row.suppliers?.business_name ?? 'Desconocido';
       if (existing) {
         existing.balance += balance;
         existing.purchaseCount += 1;
       } else {
-        bySupplier.set(row.supplier_id, {
-          supplierId: row.supplier_id,
+        bySupplier.set(supplierId, {
+          supplierId,
           supplierName,
           balance,
           purchaseCount: 1,
@@ -169,7 +176,7 @@ export class PurchaseService {
     }
 
     const { data: purchaseId, error } = await this.client.rpc('create_purchase', {
-      p_supplier_id: input.supplierId,
+      p_supplier_id: input.supplierId || null,
       p_user_id: input.actorUserId,
       p_invoice_number: input.invoiceNumber || null,
       p_notes: input.notes || null,
@@ -178,6 +185,8 @@ export class PurchaseService {
       p_payment_status: paymentStatus,
       p_amount_paid: paymentStatus === 'PARTIAL' ? input.amountPaid : null,
       p_items: this.mapItems(input.items),
+      p_payment_method: input.paymentMethod ?? 'CASH',
+      p_is_external: input.isExternal ?? false,
     });
 
     if (error) {
