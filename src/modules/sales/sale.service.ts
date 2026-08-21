@@ -11,7 +11,7 @@ type SaleItemInput = {
   productUnitId?: string | null;
 };
 
-export type PaymentMethod = 'CASH' | 'CARD' | 'TRANSFER' | 'OTHER';
+export type PaymentMethod = 'CASH' | 'CARD' | 'TRANSFER' | 'PENDING' | 'OTHER';
 
 type SaleInput = {
   customerId?: string;
@@ -59,6 +59,11 @@ export class SaleService {
   async create(input: SaleInput) {
     if (!input.items?.length) {
       throw ApiError.badRequest('La venta debe incluir al menos un ítem');
+    }
+
+    const isPending = input.paymentMethod === 'PENDING' || input.paymentMethod2 === 'PENDING';
+    if (isPending && !input.customerId && !input.customerName?.trim()) {
+      throw ApiError.badRequest('Debes especificar el nombre de la persona que debe la factura para marcarla como pendiente de pago');
     }
 
     const { data: openRegister, error: registerError } = await this.client
@@ -118,12 +123,74 @@ export class SaleService {
       entityType: 'sale',
       entityId: saleId as string,
       action: 'sale.created',
-      description: 'Venta registrada',
+      description: isPending ? `Venta pendiente de pago (fiado) registrada para ${input.customerName || 'cliente'}` : 'Venta registrada',
       userId: input.actorUserId,
       ipAddress: input.ipAddress,
-      metadata: { customerId: input.customerId, total },
+      metadata: { customerId: input.customerId, total, isPending },
     });
 
     return sale;
+  }
+
+  /**
+   * Registra el pago de una factura que estaba en estado pendiente de pago (fiado).
+   */
+  async payPendingSale(saleId: string, input: { paymentMethod: PaymentMethod; note?: string; actorUserId: string; storeId: string; ipAddress?: string }) {
+    const { data: existingData, error: findError } = await this.client
+      .from('sales')
+      .select('*')
+      .eq('id', saleId)
+      .eq('store_id', input.storeId)
+      .single();
+    throwIfError(findError);
+
+    const existing = existingData as any;
+
+    if (!existing) {
+      throw ApiError.notFound('Venta no encontrada');
+    }
+
+    if (existing.payment_method !== 'PENDING') {
+      throw ApiError.badRequest('Esta venta ya no está pendiente de pago');
+    }
+
+    const updatePayload: any = {
+      payment_method: input.paymentMethod,
+      amount_paid_1: existing.total,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (input.note) {
+      updatePayload.notes = existing.notes ? `${existing.notes} | Pago: ${input.note}` : `Pago: ${input.note}`;
+    }
+
+    const { error: updateError } = await this.client
+      .from('sales')
+      .update(updatePayload)
+      .eq('id', saleId)
+      .eq('store_id', input.storeId);
+    throwIfError(updateError);
+
+    await createAuditLog({
+      entityType: 'sale',
+      entityId: saleId,
+      action: 'sale.paid',
+      description: `Pago registrado para factura ${saleId.substring(0, 8)} con método ${input.paymentMethod}`,
+      userId: input.actorUserId,
+      ipAddress: input.ipAddress,
+      metadata: { previousMethod: existing.payment_method, newMethod: input.paymentMethod, total: existing.total },
+    });
+
+    const { data: updated, error: reloadError } = await this.client
+      .from('sales')
+      .select(
+        `*, customers(full_name),
+         sale_items(id, product_id, quantity, unit_price, line_total, unit_label, unit_factor, unit_quantity, products(name))`
+      )
+      .eq('id', saleId)
+      .single();
+    throwIfError(reloadError);
+
+    return updated;
   }
 }

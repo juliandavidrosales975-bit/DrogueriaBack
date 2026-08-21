@@ -64,5 +64,19 @@ saleRouter.get('/:id/returns', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// Registrar pago de una venta pendiente (fiado)
+saleRouter.patch('/:id/pay', async (req, res, next) => {
+  try {
+    const data = await saleService.payPendingSale(req.params.id as string, {
+      paymentMethod: req.body.paymentMethod,
+      note: req.body.note,
+      actorUserId: req.user!.id,
+      storeId: getStoreId(req),
+      ipAddress: req.ip,
+    });
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
 export { saleRouter };
 

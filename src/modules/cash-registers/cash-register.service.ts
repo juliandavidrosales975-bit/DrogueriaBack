@@ -74,6 +74,7 @@ export class CashRegisterService {
       ...register,
       salesTotalSoFar: salesSoFar.total,
       cashSalesTotalSoFar: salesSoFar.cashTotal,
+      salesByPaymentMethodSoFar: salesSoFar.byPaymentMethod,
       salesCountSoFar: salesSoFar.count,
       cogsTotalSoFar: cogsSoFar,
       profitTotalSoFar: cogsSoFar === null ? null : salesSoFar.total - cogsSoFar,
@@ -138,28 +139,44 @@ export class CashRegisterService {
     const refundsTotal = (returnsData ?? []).reduce((sum: number, r: any) => sum + Number(r.total_refund || 0), 0);
 
     const rawTotal = rows.reduce((sum, row) => sum + Number(row.total), 0);
-    const rawCashTotal = rows.reduce((sum, row) => {
-      let cash = 0;
+
+    const byPaymentMethod: Record<string, number> = {
+      CASH: 0,
+      TRANSFER: 0,
+      CARD: 0,
+      PENDING: 0,
+      OTHER: 0,
+    };
+
+    for (const row of rows) {
       if (row.payment_method_2) {
-        if (row.payment_method === 'CASH') {
-          cash += Number(row.amount_paid_1 ?? 0);
-        }
-        if (row.payment_method_2 === 'CASH') {
-          cash += Number(row.amount_paid_2 ?? 0);
-        }
-      } else if (row.payment_method === 'CASH') {
-        cash += Number(row.total);
+        const pm1 = row.payment_method || 'CASH';
+        const pm2 = row.payment_method_2 || 'TRANSFER';
+        const amt1 = Number(row.amount_paid_1 ?? (Number(row.total) - Number(row.amount_paid_2 || 0)));
+        const amt2 = Number(row.amount_paid_2 ?? 0);
+
+        if (byPaymentMethod[pm1] !== undefined) byPaymentMethod[pm1] += amt1;
+        else byPaymentMethod.OTHER += amt1;
+
+        if (byPaymentMethod[pm2] !== undefined) byPaymentMethod[pm2] += amt2;
+        else byPaymentMethod.OTHER += amt2;
+      } else {
+        const pm = row.payment_method || 'CASH';
+        const amt = Number(row.total);
+        if (byPaymentMethod[pm] !== undefined) byPaymentMethod[pm] += amt;
+        else byPaymentMethod.OTHER += amt;
       }
-      return sum + cash;
-    }, 0);
+    }
 
     const total = Math.max(0, rawTotal - refundsTotal);
     // Solo las ventas en EFECTIVO afectan el efectivo físico esperado en caja menos los reembolsos
-    const cashTotal = Math.max(0, rawCashTotal - refundsTotal);
+    const cashTotal = Math.max(0, (byPaymentMethod.CASH || 0) - refundsTotal);
+    byPaymentMethod.CASH = cashTotal;
 
     return {
       total,
       cashTotal,
+      byPaymentMethod,
       refundsTotal,
       count: count ?? rows.length,
       saleIds: rows.map((row) => row.id),
@@ -249,6 +266,7 @@ export class CashRegisterService {
     const {
       total: salesTotal,
       cashTotal: cashSalesTotal,
+      byPaymentMethod,
       count: salesCount,
       saleIds,
     } = await this.salesSince(input.storeId, current.openedAt, closedAt);
@@ -297,6 +315,7 @@ export class CashRegisterService {
         salesCount,
         cogsTotal,
         profitTotal,
+        byPaymentMethod,
       },
     });
 
@@ -304,6 +323,6 @@ export class CashRegisterService {
 
     // El COGS no se persiste en cash_registers: se devuelve calculado para el
     // resumen que se muestra al cerrar el turno.
-    return { ...register, cogsTotal, profitTotal };
+    return { ...register, cogsTotal, profitTotal, byPaymentMethod };
   }
 }
