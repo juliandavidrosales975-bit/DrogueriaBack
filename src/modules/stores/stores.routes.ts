@@ -49,6 +49,27 @@ storesRouter.put('/:id', async (req, res, next) => {
   }
 });
 
+// POST /api/stores/:id/extend-trial — Extender días de prueba
+storesRouter.post('/:id/extend-trial', async (req, res, next) => {
+  try {
+    const days = req.body?.days ? Number(req.body.days) : 15;
+    const data = await storesService.extendTrial(req.params.id as string, days);
+    res.json({ success: true, message: `Prueba extendida por ${days} días`, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// PATCH /api/stores/:id/subscription — Cambiar estado de suscripción o vigencia
+storesRouter.patch('/:id/subscription', async (req, res, next) => {
+  try {
+    const data = await storesService.updateSubscription(req.params.id as string, req.body);
+    res.json({ success: true, message: 'Suscripción actualizada', data });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // DELETE /api/stores/:id — Eliminar droguería
 storesRouter.delete('/:id', async (req, res, next) => {
   try {

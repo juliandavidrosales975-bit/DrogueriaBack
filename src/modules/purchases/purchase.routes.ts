@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { PurchaseService } from './purchase.service';
-import { requireAuth, authorize } from '@shared/middlewares/auth.middleware';
+import { requireAuth, authorize, requireActiveSubscription } from '@shared/middlewares/auth.middleware';
 import { ApiError } from '@shared/errors/ApiError';
 import { ALL_BUSINESS_ROLES } from '@shared/utils/roles';
 
@@ -22,7 +22,7 @@ purchaseRouter.get('/', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-purchaseRouter.post('/', async (req, res, next) => {
+purchaseRouter.post('/', requireActiveSubscription, async (req, res, next) => {
   try {
     const data = await purchaseService.create({
       ...req.body,
@@ -36,7 +36,7 @@ purchaseRouter.post('/', async (req, res, next) => {
 
 // Edita una compra ya registrada (ítems, cantidades, costos y precio de venta).
 // El ajuste de inventario y la validación de stock los hace la RPC update_purchase.
-purchaseRouter.put('/:id', async (req, res, next) => {
+purchaseRouter.put('/:id', requireActiveSubscription, async (req, res, next) => {
   try {
     const data = await purchaseService.update({
       ...req.body,
@@ -56,7 +56,7 @@ purchaseRouter.get('/outstanding-by-supplier', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-purchaseRouter.post('/:id/payments', async (req, res, next) => {
+purchaseRouter.post('/:id/payments', requireActiveSubscription, async (req, res, next) => {
   try {
     const data = await purchaseService.registerPayment({
       purchaseId: req.params.id as string,

@@ -16,6 +16,10 @@ export type UserWithRole = {
   storeId: string | null;
   storeName: string | null;
   storeType: 'PHARMACY' | 'STORE' | null;
+  subscriptionStatus?: 'TRIAL' | 'ACTIVE' | 'EXPIRED' | 'SUSPENDED' | null;
+  trialEndsAt?: string | null;
+  daysRemaining?: number | null;
+  isTrialExpired?: boolean;
   permissions: string[] | null;
   createdAt: string;
   updatedAt: string;
@@ -40,25 +44,52 @@ type CreateRefreshTokenInput = {
   revokedAt: Date | null;
 };
 
-const mapUser = (row: any): UserWithRole => ({
-  id: row.id,
-  email: row.email,
-  username: row.username,
-  fullName: row.full_name,
-  passwordHash: row.password_hash,
-  status: row.status,
-  failedLoginAttempts: row.failed_login_attempts,
-  lockedUntil: row.locked_until,
-  lastLoginAt: row.last_login_at,
-  roleId: row.role_id,
-  roleName: row.roles?.name ?? null,
-  storeId: row.store_id ?? null,
-  storeName: row.stores?.name ?? null,
-  storeType: (row.stores?.type as 'PHARMACY' | 'STORE') ?? null,
-  permissions: row.permissions ?? null,
-  createdAt: row.created_at,
-  updatedAt: row.updated_at,
-});
+const computeTrialInfo = (status?: string | null, trialEndsAt?: string | null) => {
+  if (!status || status === 'ACTIVE') {
+    return { isTrialExpired: false, daysRemaining: null };
+  }
+  if (status === 'EXPIRED' || status === 'SUSPENDED') {
+    return { isTrialExpired: true, daysRemaining: 0 };
+  }
+  if (!trialEndsAt) {
+    return { isTrialExpired: false, daysRemaining: null };
+  }
+  const diffMs = new Date(trialEndsAt).getTime() - Date.now();
+  const daysRemaining = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+  const isTrialExpired = diffMs <= 0;
+  return { isTrialExpired, daysRemaining };
+};
+
+const mapUser = (row: any): UserWithRole => {
+  const store = row.stores;
+  const status = store?.subscription_status ?? null;
+  const trialEndsAt = store?.trial_ends_at ?? null;
+  const trialInfo = status ? computeTrialInfo(status, trialEndsAt) : { isTrialExpired: false, daysRemaining: null };
+
+  return {
+    id: row.id,
+    email: row.email,
+    username: row.username,
+    fullName: row.full_name,
+    passwordHash: row.password_hash,
+    status: row.status,
+    failedLoginAttempts: row.failed_login_attempts,
+    lockedUntil: row.locked_until,
+    lastLoginAt: row.last_login_at,
+    roleId: row.role_id,
+    roleName: row.roles?.name ?? null,
+    storeId: row.store_id ?? null,
+    storeName: store?.name ?? null,
+    storeType: (store?.type as 'PHARMACY' | 'STORE') ?? null,
+    subscriptionStatus: status,
+    trialEndsAt,
+    daysRemaining: trialInfo.daysRemaining,
+    isTrialExpired: trialInfo.isTrialExpired,
+    permissions: row.permissions ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+};
 
 export class AuthRepository {
   private get client(): any {
@@ -68,7 +99,7 @@ export class AuthRepository {
   async findUserByEmail(email: string): Promise<UserWithRole | null> {
     const { data, error } = await this.client
       .from('users')
-      .select('*, roles(name), stores(name, type)')
+      .select('*, roles(name), stores(name, type, subscription_status, trial_days, trial_ends_at)')
       .eq('email', email)
       .maybeSingle();
 
@@ -79,7 +110,7 @@ export class AuthRepository {
   async getUserWithRole(userId: string): Promise<UserWithRole | null> {
     const { data, error } = await this.client
       .from('users')
-      .select('*, roles(name), stores(name, type)')
+      .select('*, roles(name), stores(name, type, subscription_status, trial_days, trial_ends_at)')
       .eq('id', userId)
       .maybeSingle();
 

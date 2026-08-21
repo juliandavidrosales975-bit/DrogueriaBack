@@ -82,6 +82,10 @@ export class AuthService {
         storeId: userWithRole.storeId,
         storeName: userWithRole.storeName,
         storeType: userWithRole.storeType,
+        subscriptionStatus: userWithRole.subscriptionStatus ?? null,
+        trialEndsAt: userWithRole.trialEndsAt ?? null,
+        daysRemaining: userWithRole.daysRemaining ?? null,
+        isTrialExpired: userWithRole.isTrialExpired ?? false,
         permissions: userWithRole.permissions ?? null,
       },
       accessToken,
@@ -96,6 +100,10 @@ export class AuthService {
     storeId: string | null;
     storeName: string | null;
     storeType: string | null;
+    subscriptionStatus?: string | null;
+    trialEndsAt?: string | null;
+    daysRemaining?: number | null;
+    isTrialExpired?: boolean;
     permissions?: string[] | null;
   }): string {
     return jwt.sign(
@@ -106,6 +114,10 @@ export class AuthService {
         storeId: user.storeId ?? null,
         storeName: user.storeName ?? null,
         storeType: user.storeType ?? null,
+        subscriptionStatus: user.subscriptionStatus ?? null,
+        trialEndsAt: user.trialEndsAt ?? null,
+        daysRemaining: user.daysRemaining ?? null,
+        isTrialExpired: user.isTrialExpired ?? false,
         permissions: user.permissions ?? null,
       },
       env.jwt.secret,
@@ -160,6 +172,10 @@ export class AuthService {
       storeId: user.storeId,
       storeName: user.storeName,
       storeType: user.storeType,
+      subscriptionStatus: user.subscriptionStatus ?? null,
+      trialEndsAt: user.trialEndsAt ?? null,
+      daysRemaining: user.daysRemaining ?? null,
+      isTrialExpired: user.isTrialExpired ?? false,
       permissions: user.permissions ?? null,
     };
   }

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { SaleService } from './sale.service';
 import { ReturnService } from './return.service';
-import { requireAuth, authorize } from '@shared/middlewares/auth.middleware';
+import { requireAuth, authorize, requireActiveSubscription } from '@shared/middlewares/auth.middleware';
 import { ApiError } from '@shared/errors/ApiError';
 import { ALL_BUSINESS_ROLES, OPERATOR_ROLES } from '@shared/utils/roles';
 
@@ -29,7 +29,7 @@ saleRouter.get('/', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-saleRouter.post('/', async (req, res, next) => {
+saleRouter.post('/', requireActiveSubscription, async (req, res, next) => {
   try {
     const data = await saleService.create({
       ...req.body,
@@ -42,7 +42,7 @@ saleRouter.post('/', async (req, res, next) => {
 });
 
 // Registrar devolución parcial o total de una venta
-saleRouter.post('/:id/returns', async (req, res, next) => {
+saleRouter.post('/:id/returns', requireActiveSubscription, async (req, res, next) => {
   try {
     const data = await returnService.create({
       saleId: req.params.id as string,
@@ -65,7 +65,7 @@ saleRouter.get('/:id/returns', async (req, res, next) => {
 });
 
 // Registrar pago de una venta pendiente (fiado)
-saleRouter.patch('/:id/pay', async (req, res, next) => {
+saleRouter.patch('/:id/pay', requireActiveSubscription, async (req, res, next) => {
   try {
     const data = await saleService.payPendingSale(req.params.id as string, {
       paymentMethod: req.body.paymentMethod,
