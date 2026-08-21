@@ -103,9 +103,10 @@ export class CashRegisterService {
   private async salesSince(storeId: string, sinceIso: string, untilIso?: string) {
     let query = this.client
       .from('sales')
-      .select('id, total, payment_method, payment_method_2, amount_paid_1, amount_paid_2', { count: 'exact' })
+      .select('id, total, payment_method, payment_method_2, amount_paid_1, amount_paid_2, status', { count: 'exact' })
       .eq('store_id', storeId)
       .neq('status', 'CANCELLED')
+      .neq('status', 'RETURNED') // ventas totalmente devueltas no generan ingreso
       .gte('created_at', sinceIso);
 
     if (untilIso) {
@@ -118,16 +119,18 @@ export class CashRegisterService {
     const rows = (data ?? []) as unknown as Array<{
       id: string;
       total: number;
+      status: string;
       payment_method: string;
       payment_method_2?: string | null;
       amount_paid_1?: number | null;
       amount_paid_2?: number | null;
     }>;
 
-    // Consultar devoluciones realizadas durante el turno para descontar el efectivo reintegrado
+    // Consultar devoluciones realizadas durante el turno junto con la venta origen
+    // para saber qué método de pago descontar correctamente
     let returnsQuery = this.client
       .from('sale_returns')
-      .select('total_refund')
+      .select('total_refund, sale_id, sales(payment_method, payment_method_2, total, amount_paid_1, amount_paid_2)')
       .eq('store_id', storeId)
       .gte('created_at', sinceIso);
 
@@ -136,7 +139,18 @@ export class CashRegisterService {
     }
 
     const { data: returnsData } = await returnsQuery;
-    const refundsTotal = (returnsData ?? []).reduce((sum: number, r: any) => sum + Number(r.total_refund || 0), 0);
+    const returnRows = (returnsData ?? []) as unknown as Array<{
+      total_refund: number;
+      sale_id: string;
+      sales?: {
+        payment_method: string;
+        payment_method_2?: string | null;
+        total?: number;
+        amount_paid_1?: number | null;
+        amount_paid_2?: number | null;
+      } | null;
+    }>;
+    const refundsTotal = returnRows.reduce((sum, r) => sum + Number(r.total_refund || 0), 0);
 
     const rawTotal = rows.reduce((sum, row) => sum + Number(row.total), 0);
 
@@ -148,6 +162,8 @@ export class CashRegisterService {
       OTHER: 0,
     };
 
+    // Acumular ingresos por método de pago para las ventas del turno.
+    // Para PARTIAL_RETURN se descuenta el reembolso más abajo.
     for (const row of rows) {
       if (row.payment_method_2) {
         const pm1 = row.payment_method || 'CASH';
@@ -168,10 +184,39 @@ export class CashRegisterService {
       }
     }
 
+    // Descontar cada devolución del método de pago correcto de la venta origen.
+    // Si la venta fue en PENDING (fiado) y se devolvió, quitamos de PENDING.
+    // Si fue en CASH, quitamos de CASH, etc.
+    for (const ret of returnRows) {
+      const sale = ret.sales;
+      const refund = Number(ret.total_refund || 0);
+      if (!sale || refund <= 0) continue;
+
+      if (sale.payment_method_2) {
+        // Venta mixta: el reembolso se reparte proporcionalmente entre los 2 métodos
+        const saleTotal = Number(sale.total || 0);
+        const amt1 = Number(sale.amount_paid_1 ?? (saleTotal - Number(sale.amount_paid_2 || 0)));
+        const amt2 = Number(sale.amount_paid_2 ?? 0);
+        const ratio1 = saleTotal > 0 ? amt1 / saleTotal : 0.5;
+        const refund1 = refund * ratio1;
+        const refund2 = refund - refund1;
+
+        const pm1 = sale.payment_method || 'CASH';
+        const pm2 = sale.payment_method_2 || 'TRANSFER';
+        if (byPaymentMethod[pm1] !== undefined) byPaymentMethod[pm1] = Math.max(0, byPaymentMethod[pm1] - refund1);
+        if (byPaymentMethod[pm2] !== undefined) byPaymentMethod[pm2] = Math.max(0, byPaymentMethod[pm2] - refund2);
+      } else {
+        const pm = sale.payment_method || 'CASH';
+        if (byPaymentMethod[pm] !== undefined) {
+          byPaymentMethod[pm] = Math.max(0, byPaymentMethod[pm] - refund);
+        } else {
+          byPaymentMethod.OTHER = Math.max(0, byPaymentMethod.OTHER - refund);
+        }
+      }
+    }
+
     const total = Math.max(0, rawTotal - refundsTotal);
-    // Solo las ventas en EFECTIVO afectan el efectivo físico esperado en caja menos los reembolsos
-    const cashTotal = Math.max(0, (byPaymentMethod.CASH || 0) - refundsTotal);
-    byPaymentMethod.CASH = cashTotal;
+    const cashTotal = byPaymentMethod.CASH || 0;
 
     return {
       total,
@@ -182,6 +227,7 @@ export class CashRegisterService {
       saleIds: rows.map((row) => row.id),
     };
   }
+
 
   /**
    * Costo de los productos vendidos (COGS) de un conjunto de ventas.
