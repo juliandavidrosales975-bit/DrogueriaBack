@@ -37,6 +37,7 @@ export class SaleService {
   /**
    * Lista las ventas de la droguería. Si se pasa `userId`, solo devuelve las
    * ventas registradas por ese usuario (usado para que un Cajero solo vea las suyas).
+   * Excluye ventas CANCELLED y RETURNED (devueltas totalmente) ya que no generan ingresos.
    */
   async list(storeId: string, userId?: string) {
     let query = this.client
@@ -45,7 +46,9 @@ export class SaleService {
         `*, customers(full_name), users(full_name),
          sale_items(id, product_id, quantity, unit_price, unit_cost, line_total, unit_label, unit_factor, unit_quantity, products(name))`
       )
-      .eq('store_id', storeId);
+      .eq('store_id', storeId)
+      .neq('status', 'CANCELLED')
+      .neq('status', 'RETURNED');
 
     if (userId) {
       query = query.eq('user_id', userId);
