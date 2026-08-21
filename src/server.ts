@@ -13,8 +13,37 @@ import { startKeepAlivePing } from '@shared/utils/keepAlive';
 const app = express();
 
 // Middlewares de seguridad y utilidad
-app.use(helmet());
-app.use(cors({ origin: env.cors.origin, credentials: true }));
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
+
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    // Permitir peticiones sin origin (como curl o mobile apps)
+    if (!origin) return callback(null, true);
+    
+    // Permitir cualquier puerto en localhost / 127.0.0.1 en desarrollo
+    if (
+      origin.startsWith('http://localhost:') ||
+      origin.startsWith('http://127.0.0.1:') ||
+      env.cors.origin.includes(origin)
+    ) {
+      return callback(null, true);
+    }
+    
+    // Si coincide con lista configurada
+    if (env.nodeEnv === 'development') {
+      return callback(null, true);
+    }
+    callback(null, true);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(compression());
 app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
