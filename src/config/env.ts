@@ -51,6 +51,7 @@ export const env = {
           'http://localhost:5173',
           'http://localhost:5174',
           'http://localhost:5175',
+          'https://capsula-pos.vercel.app',
           'https://drogueria-alpha.vercel.app',
         ]
     ).map((o) => o.replace(/\/+$/, '')),
