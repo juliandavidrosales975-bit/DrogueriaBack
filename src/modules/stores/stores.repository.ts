@@ -150,8 +150,25 @@ export class StoresRepository {
     if (input.email !== undefined) payload.email = input.email;
     if (input.type !== undefined) payload.type = input.type;
     if (input.isActive !== undefined) payload.is_active = input.isActive;
-    if (input.subscriptionStatus !== undefined) payload.subscription_status = input.subscriptionStatus;
-    if (input.trialDays !== undefined) payload.trial_days = Number(input.trialDays);
+
+    if (input.subscriptionStatus !== undefined) {
+      payload.subscription_status = input.subscriptionStatus;
+      if (input.subscriptionStatus === 'ACTIVE') {
+        payload.trial_ends_at = null;
+      }
+    }
+
+    if (input.trialDays !== undefined) {
+      const days = Number(input.trialDays);
+      payload.trial_days = days;
+      // Si se asignan días y no es ACTIVE, recalcular fecha de vencimiento a partir de hoy
+      if (input.subscriptionStatus !== 'ACTIVE' && input.trialEndsAt === undefined) {
+        const d = new Date();
+        d.setDate(d.getDate() + days);
+        payload.trial_ends_at = d.toISOString();
+      }
+    }
+
     if (input.trialEndsAt !== undefined) {
       payload.trial_ends_at = input.trialEndsAt ? new Date(input.trialEndsAt).toISOString() : null;
     }
