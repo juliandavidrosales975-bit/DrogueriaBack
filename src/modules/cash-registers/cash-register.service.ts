@@ -165,22 +165,43 @@ export class CashRegisterService {
     // Acumular ingresos por método de pago para las ventas del turno.
     // Para PARTIAL_RETURN se descuenta el reembolso más abajo.
     for (const row of rows) {
+      const rowTotal = Number(row.total || 0);
+
       if (row.payment_method_2) {
         const pm1 = row.payment_method || 'CASH';
         const pm2 = row.payment_method_2 || 'TRANSFER';
-        const amt1 = Number(row.amount_paid_1 ?? (Number(row.total) - Number(row.amount_paid_2 || 0)));
-        const amt2 = Number(row.amount_paid_2 ?? 0);
 
-        if (byPaymentMethod[pm1] !== undefined) byPaymentMethod[pm1] += amt1;
-        else byPaymentMethod.OTHER += amt1;
+        let amt1 = row.amount_paid_1 !== null && row.amount_paid_1 !== undefined ? Number(row.amount_paid_1) : null;
+        let amt2 = row.amount_paid_2 !== null && row.amount_paid_2 !== undefined ? Number(row.amount_paid_2) : null;
 
-        if (byPaymentMethod[pm2] !== undefined) byPaymentMethod[pm2] += amt2;
-        else byPaymentMethod.OTHER += amt2;
+        if ((amt1 === null || isNaN(amt1)) && (amt2 === null || isNaN(amt2))) {
+          amt1 = rowTotal;
+          amt2 = 0;
+        } else if (amt1 === null || isNaN(amt1)) {
+          amt1 = Math.max(0, rowTotal - (amt2 || 0));
+        } else if (amt2 === null || isNaN(amt2)) {
+          amt2 = Math.max(0, rowTotal - (amt1 || 0));
+        } else {
+          const sum = amt1 + amt2;
+          if (sum === 0 && rowTotal > 0) {
+            amt1 = rowTotal;
+            amt2 = 0;
+          } else if (sum > 0 && Math.abs(sum - rowTotal) > 0.01) {
+            const ratio1 = amt1 / sum;
+            amt1 = Math.round(rowTotal * ratio1 * 100) / 100;
+            amt2 = Math.round((rowTotal - amt1) * 100) / 100;
+          }
+        }
+
+        if (byPaymentMethod[pm1] !== undefined) byPaymentMethod[pm1] += (amt1 || 0);
+        else byPaymentMethod.OTHER += (amt1 || 0);
+
+        if (byPaymentMethod[pm2] !== undefined) byPaymentMethod[pm2] += (amt2 || 0);
+        else byPaymentMethod.OTHER += (amt2 || 0);
       } else {
         const pm = row.payment_method || 'CASH';
-        const amt = Number(row.total);
-        if (byPaymentMethod[pm] !== undefined) byPaymentMethod[pm] += amt;
-        else byPaymentMethod.OTHER += amt;
+        if (byPaymentMethod[pm] !== undefined) byPaymentMethod[pm] += rowTotal;
+        else byPaymentMethod.OTHER += rowTotal;
       }
     }
 
@@ -190,29 +211,46 @@ export class CashRegisterService {
     for (const ret of returnRows) {
       const sale = ret.sales;
       const refund = Number(ret.total_refund || 0);
-      if (!sale || refund <= 0) continue;
+      if (refund <= 0) continue;
 
-      if (sale.payment_method_2) {
+      if (sale && sale.payment_method_2) {
         // Venta mixta: el reembolso se reparte proporcionalmente entre los 2 métodos
         const saleTotal = Number(sale.total || 0);
-        const amt1 = Number(sale.amount_paid_1 ?? (saleTotal - Number(sale.amount_paid_2 || 0)));
-        const amt2 = Number(sale.amount_paid_2 ?? 0);
-        const ratio1 = saleTotal > 0 ? amt1 / saleTotal : 0.5;
-        const refund1 = refund * ratio1;
-        const refund2 = refund - refund1;
+        let amt1 = sale.amount_paid_1 != null ? Number(sale.amount_paid_1) : null;
+        let amt2 = sale.amount_paid_2 != null ? Number(sale.amount_paid_2) : null;
+        if (amt1 == null && amt2 == null) { amt1 = saleTotal; amt2 = 0; }
+        else if (amt1 == null) { amt1 = Math.max(0, saleTotal - (amt2 || 0)); }
+        else if (amt2 == null) { amt2 = Math.max(0, saleTotal - (amt1 || 0)); }
+
+        const sum = (amt1 || 0) + (amt2 || 0);
+        const ratio1 = sum > 0 ? (amt1 || 0) / sum : 0.5;
+        const refund1 = Math.round(refund * ratio1 * 100) / 100;
+        const refund2 = Math.round((refund - refund1) * 100) / 100;
 
         const pm1 = sale.payment_method || 'CASH';
         const pm2 = sale.payment_method_2 || 'TRANSFER';
         if (byPaymentMethod[pm1] !== undefined) byPaymentMethod[pm1] = Math.max(0, byPaymentMethod[pm1] - refund1);
         if (byPaymentMethod[pm2] !== undefined) byPaymentMethod[pm2] = Math.max(0, byPaymentMethod[pm2] - refund2);
-      } else {
+      } else if (sale) {
         const pm = sale.payment_method || 'CASH';
         if (byPaymentMethod[pm] !== undefined) {
           byPaymentMethod[pm] = Math.max(0, byPaymentMethod[pm] - refund);
         } else {
           byPaymentMethod.OTHER = Math.max(0, byPaymentMethod.OTHER - refund);
         }
+      } else {
+        // Si no se encuentra la venta origen asociada, descontar de efectivo o general
+        if (byPaymentMethod.CASH >= refund) {
+          byPaymentMethod.CASH = Math.max(0, byPaymentMethod.CASH - refund);
+        } else {
+          byPaymentMethod.OTHER = Math.max(0, byPaymentMethod.OTHER - refund);
+        }
       }
+    }
+
+    // Redondear valores de métodos
+    for (const k of Object.keys(byPaymentMethod)) {
+      byPaymentMethod[k] = Math.round((byPaymentMethod[k] || 0) * 100) / 100;
     }
 
     const total = Math.max(0, rawTotal - refundsTotal);
