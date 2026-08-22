@@ -248,12 +248,40 @@ export class CashRegisterService {
       }
     }
 
+    // Consultar abonos a reservas recibidos durante el turno
+    try {
+      let advancesQuery = this.client
+        .from('reservation_advances')
+        .select('amount, payment_method')
+        .eq('store_id', storeId)
+        .gte('created_at', sinceIso);
+
+      if (untilIso) {
+        advancesQuery = advancesQuery.lte('created_at', untilIso);
+      }
+
+      const { data: advancesData } = await advancesQuery;
+      const advanceRows = (advancesData ?? []) as unknown as Array<{
+        amount: number;
+        payment_method: string;
+      }>;
+
+      for (const adv of advanceRows) {
+        const amt = Number(adv.amount || 0);
+        const pm = adv.payment_method || 'CASH';
+        if (byPaymentMethod[pm] !== undefined) byPaymentMethod[pm] += amt;
+        else byPaymentMethod.OTHER += amt;
+      }
+    } catch (advErr: any) {
+      // Ignorar si la tabla aún no se ha creado en la base de datos
+    }
+
     // Redondear valores de métodos
     for (const k of Object.keys(byPaymentMethod)) {
       byPaymentMethod[k] = Math.round((byPaymentMethod[k] || 0) * 100) / 100;
     }
 
-    const total = Math.max(0, rawTotal - refundsTotal);
+    const total = Object.values(byPaymentMethod).reduce((sum, v) => sum + v, 0);
     const cashTotal = byPaymentMethod.CASH || 0;
 
     return {
