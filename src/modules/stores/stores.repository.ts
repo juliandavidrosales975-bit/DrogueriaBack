@@ -13,6 +13,7 @@ export type Store = {
   email: string | null;
   type: StoreType;
   isActive: boolean;
+  hasReservations: boolean;
   subscriptionStatus: SubscriptionStatus;
   trialDays: number;
   trialStartedAt: string | null;
@@ -30,6 +31,7 @@ export type CreateStoreInput = {
   phone?: string | null;
   email?: string | null;
   type?: StoreType;
+  hasReservations?: boolean;
   subscriptionStatus?: SubscriptionStatus;
   trialDays?: number;
   trialEndsAt?: string | null;
@@ -68,6 +70,7 @@ const mapStore = (row: any): Store => {
     email: row.email,
     type: (row.type as StoreType) ?? 'PHARMACY',
     isActive: row.is_active,
+    hasReservations: Boolean(row.has_reservations),
     subscriptionStatus: status,
     trialDays: row.trial_days ?? 15,
     trialStartedAt: row.trial_started_at ?? null,
@@ -129,6 +132,7 @@ export class StoresRepository {
         phone: input.phone ?? null,
         email: input.email ?? null,
         type: input.type ?? 'PHARMACY',
+        has_reservations: input.hasReservations ?? false,
         is_active: true,
         subscription_status: subscriptionStatus,
         trial_days: trialDays,
@@ -150,6 +154,7 @@ export class StoresRepository {
     if (input.email !== undefined) payload.email = input.email;
     if (input.type !== undefined) payload.type = input.type;
     if (input.isActive !== undefined) payload.is_active = input.isActive;
+    if (input.hasReservations !== undefined) payload.has_reservations = input.hasReservations;
 
     if (input.subscriptionStatus !== undefined) {
       payload.subscription_status = input.subscriptionStatus;

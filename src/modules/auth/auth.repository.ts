@@ -16,6 +16,7 @@ export type UserWithRole = {
   storeId: string | null;
   storeName: string | null;
   storeType: 'PHARMACY' | 'STORE' | null;
+  hasReservations?: boolean;
   subscriptionStatus?: 'TRIAL' | 'ACTIVE' | 'EXPIRED' | 'SUSPENDED' | null;
   trialEndsAt?: string | null;
   daysRemaining?: number | null;
@@ -44,8 +45,8 @@ type CreateRefreshTokenInput = {
   revokedAt: Date | null;
 };
 
-const computeTrialInfo = (status?: string | null, trialEndsAt?: string | null) => {
-  if (!status || status === 'ACTIVE') {
+const computeTrialInfo = (status: string, trialEndsAt: string | null) => {
+  if (status === 'ACTIVE') {
     return { isTrialExpired: false, daysRemaining: null };
   }
   if (status === 'EXPIRED' || status === 'SUSPENDED') {
@@ -81,6 +82,7 @@ const mapUser = (row: any): UserWithRole => {
     storeId: row.store_id ?? null,
     storeName: store?.name ?? null,
     storeType: (store?.type as 'PHARMACY' | 'STORE') ?? null,
+    hasReservations: Boolean(store?.has_reservations),
     subscriptionStatus: status,
     trialEndsAt,
     daysRemaining: trialInfo.daysRemaining,
@@ -99,7 +101,7 @@ export class AuthRepository {
   async findUserByEmail(email: string): Promise<UserWithRole | null> {
     const { data, error } = await this.client
       .from('users')
-      .select('*, roles(name), stores(name, type, subscription_status, trial_days, trial_ends_at)')
+      .select('*, roles(name), stores(name, type, subscription_status, trial_days, trial_ends_at, has_reservations)')
       .eq('email', email)
       .maybeSingle();
 
@@ -110,7 +112,7 @@ export class AuthRepository {
   async getUserWithRole(userId: string): Promise<UserWithRole | null> {
     const { data, error } = await this.client
       .from('users')
-      .select('*, roles(name), stores(name, type, subscription_status, trial_days, trial_ends_at)')
+      .select('*, roles(name), stores(name, type, subscription_status, trial_days, trial_ends_at, has_reservations)')
       .eq('id', userId)
       .maybeSingle();
 
