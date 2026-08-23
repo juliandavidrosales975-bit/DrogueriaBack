@@ -74,6 +74,9 @@ export class CashRegisterService {
       ...register,
       salesTotalSoFar: salesSoFar.total,
       cashSalesTotalSoFar: salesSoFar.cashTotal,
+      transferSalesTotalSoFar: salesSoFar.transferTotal,
+      cardSalesTotalSoFar: salesSoFar.cardTotal,
+      pendingSalesTotalSoFar: salesSoFar.pendingTotal,
       salesByPaymentMethodSoFar: salesSoFar.byPaymentMethod,
       salesCountSoFar: salesSoFar.count,
       cogsTotalSoFar: cogsSoFar,
@@ -101,12 +104,13 @@ export class CashRegisterService {
   }
 
   private async salesSince(storeId: string, sinceIso: string, untilIso?: string) {
+    // 1. Ventas creadas durante el turno (excluyendo canceladas y devueltas)
     let query = this.client
       .from('sales')
-      .select('id, total, payment_method, payment_method_2, amount_paid_1, amount_paid_2, status', { count: 'exact' })
+      .select('id, total, payment_method, payment_method_2, amount_paid_1, amount_paid_2, status, created_at, updated_at', { count: 'exact' })
       .eq('store_id', storeId)
       .neq('status', 'CANCELLED')
-      .neq('status', 'RETURNED') // ventas totalmente devueltas no generan ingreso
+      .neq('status', 'RETURNED')
       .gte('created_at', sinceIso);
 
     if (untilIso) {
@@ -116,7 +120,7 @@ export class CashRegisterService {
     const { data, error, count } = await query;
     throwIfError(error);
 
-    const rows = (data ?? []) as unknown as Array<{
+    let rows = ((data ?? []) as unknown as Array<{
       id: string;
       total: number;
       status: string;
@@ -124,10 +128,40 @@ export class CashRegisterService {
       payment_method_2?: string | null;
       amount_paid_1?: number | null;
       amount_paid_2?: number | null;
-    }>;
+      created_at: string;
+      updated_at: string;
+    }>);
 
-    // Consultar devoluciones realizadas durante el turno junto con la venta origen
-    // para saber qué método de pago descontar correctamente
+    // 2. Facturas que se originaron antes del turno como PENDING (fiado) pero fueron pagadas durante el turno
+    try {
+      let paidCreditsQuery = this.client
+        .from('sales')
+        .select('id, total, payment_method, payment_method_2, amount_paid_1, amount_paid_2, status, created_at, updated_at')
+        .eq('store_id', storeId)
+        .neq('status', 'CANCELLED')
+        .neq('status', 'RETURNED')
+        .neq('payment_method', 'PENDING')
+        .lt('created_at', sinceIso)
+        .gte('updated_at', sinceIso);
+
+      if (untilIso) {
+        paidCreditsQuery = paidCreditsQuery.lte('updated_at', untilIso);
+      }
+
+      const { data: paidCreditsData } = await paidCreditsQuery;
+      if (paidCreditsData && paidCreditsData.length > 0) {
+        const existingIds = new Set(rows.map((r) => r.id));
+        for (const pRow of paidCreditsData as any[]) {
+          if (!existingIds.has(pRow.id)) {
+            rows.push(pRow);
+          }
+        }
+      }
+    } catch {
+      // Ignorar si no se puede ejecutar la consulta adicional
+    }
+
+    // 3. Consultar devoluciones realizadas durante el turno junto con la venta origen
     let returnsQuery = this.client
       .from('sale_returns')
       .select('total_refund, sale_id, sales(payment_method, payment_method_2, total, amount_paid_1, amount_paid_2)')
@@ -152,8 +186,6 @@ export class CashRegisterService {
     }>;
     const refundsTotal = returnRows.reduce((sum, r) => sum + Number(r.total_refund || 0), 0);
 
-    const rawTotal = rows.reduce((sum, row) => sum + Number(row.total), 0);
-
     const byPaymentMethod: Record<string, number> = {
       CASH: 0,
       TRANSFER: 0,
@@ -163,7 +195,6 @@ export class CashRegisterService {
     };
 
     // Acumular ingresos por método de pago para las ventas del turno.
-    // Para PARTIAL_RETURN se descuenta el reembolso más abajo.
     for (const row of rows) {
       const rowTotal = Number(row.total || 0);
 
@@ -205,16 +236,13 @@ export class CashRegisterService {
       }
     }
 
-    // Descontar cada devolución del método de pago correcto de la venta origen.
-    // Si la venta fue en PENDING (fiado) y se devolvió, quitamos de PENDING.
-    // Si fue en CASH, quitamos de CASH, etc.
+    // Descontar devoluciones del método correspondiente
     for (const ret of returnRows) {
       const sale = ret.sales;
       const refund = Number(ret.total_refund || 0);
       if (refund <= 0) continue;
 
       if (sale && sale.payment_method_2) {
-        // Venta mixta: el reembolso se reparte proporcionalmente entre los 2 métodos
         const saleTotal = Number(sale.total || 0);
         let amt1 = sale.amount_paid_1 != null ? Number(sale.amount_paid_1) : null;
         let amt2 = sale.amount_paid_2 != null ? Number(sale.amount_paid_2) : null;
@@ -239,7 +267,6 @@ export class CashRegisterService {
           byPaymentMethod.OTHER = Math.max(0, byPaymentMethod.OTHER - refund);
         }
       } else {
-        // Si no se encuentra la venta origen asociada, descontar de efectivo o general
         if (byPaymentMethod.CASH >= refund) {
           byPaymentMethod.CASH = Math.max(0, byPaymentMethod.CASH - refund);
         } else {
@@ -248,7 +275,7 @@ export class CashRegisterService {
       }
     }
 
-    // Consultar abonos a reservas recibidos durante el turno
+    // Consultar abonos a reservas recibidos durante el turno (Efectivo y Transferencias)
     try {
       let advancesQuery = this.client
         .from('reservation_advances')
@@ -272,8 +299,8 @@ export class CashRegisterService {
         if (byPaymentMethod[pm] !== undefined) byPaymentMethod[pm] += amt;
         else byPaymentMethod.OTHER += amt;
       }
-    } catch (advErr: any) {
-      // Ignorar si la tabla aún no se ha creado en la base de datos
+    } catch {
+      // Ignorar si la tabla aún no se ha creado
     }
 
     // Redondear valores de métodos
@@ -283,10 +310,16 @@ export class CashRegisterService {
 
     const total = Object.values(byPaymentMethod).reduce((sum, v) => sum + v, 0);
     const cashTotal = byPaymentMethod.CASH || 0;
+    const transferTotal = byPaymentMethod.TRANSFER || 0;
+    const cardTotal = byPaymentMethod.CARD || 0;
+    const pendingTotal = byPaymentMethod.PENDING || 0;
 
     return {
       total,
       cashTotal,
+      transferTotal,
+      cardTotal,
+      pendingTotal,
       byPaymentMethod,
       refundsTotal,
       count: count ?? rows.length,
