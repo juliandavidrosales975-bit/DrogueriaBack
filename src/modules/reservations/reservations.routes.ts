@@ -96,4 +96,17 @@ reservationsRouter.patch('/:id/cancel', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// Eliminar permanentemente una reserva
+reservationsRouter.delete('/:id', async (req, res, next) => {
+  try {
+    const data = await reservationsService.delete({
+      reservationId: req.params.id as string,
+      storeId: getStoreId(req),
+      userId: getUserId(req),
+      ipAddress: req.ip,
+    });
+    res.json({ success: true, data });
+  } catch (error) { next(error); }
+});
+
 export { reservationsRouter };

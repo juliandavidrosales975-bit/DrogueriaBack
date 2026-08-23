@@ -184,4 +184,34 @@ export class ReservationsService {
 
     return { success: true };
   }
+
+  async delete(params: {
+    reservationId: string;
+    storeId: string;
+    userId: string;
+    ipAddress?: string;
+  }) {
+    const { reservationId, storeId, userId, ipAddress } = params;
+    const reservation = await this.getById(reservationId, storeId);
+
+    await this.repo.delete(reservationId, storeId);
+
+    await createAuditLog({
+      entityType: 'RESERVATION',
+      entityId: reservationId,
+      action: 'DELETE',
+      description: `Eliminación permanente de reserva de ${reservation.customerName} (${reservation.courtName})`,
+      metadata: {
+        storeId,
+        customerName: reservation.customerName,
+        courtName: reservation.courtName,
+        reservationDate: reservation.reservationDate,
+        totalPrice: reservation.totalPrice,
+      },
+      userId,
+      ipAddress,
+    });
+
+    return { success: true };
+  }
 }

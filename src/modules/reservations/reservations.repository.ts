@@ -264,4 +264,21 @@ export class ReservationsRepository {
 
     throwIfError(error);
   }
+
+  async delete(reservationId: string, storeId: string): Promise<void> {
+    // Eliminar abonos asociados primero por consistencia
+    await this.client
+      .from('reservation_advances')
+      .delete()
+      .eq('reservation_id', reservationId)
+      .eq('store_id', storeId);
+
+    const { error } = await this.client
+      .from('court_reservations')
+      .delete()
+      .eq('id', reservationId)
+      .eq('store_id', storeId);
+
+    throwIfError(error);
+  }
 }
