@@ -91,6 +91,10 @@ import { usersRouter } from '@modules/users/users.routes';
 import { storesRouter } from '@modules/stores/stores.routes';
 import { cashRegisterRouter } from '@modules/cash-registers/cash-register.routes';
 import { reservationsRouter } from '@modules/reservations/reservations.routes';
+import { encryptionMiddleware } from './shared/middlewares/encryption.middleware';
+
+// Cifrado híbrido (RSA Asimétrico + Cifrado César) para datos en tránsito
+app.use(encryptionMiddleware);
 
 // Registrar rutas de módulos
 app.use('/api/auth', authRouter);
