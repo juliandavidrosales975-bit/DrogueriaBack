@@ -9,6 +9,7 @@ type SaleItemInput = {
   unitFactor?: number;
   unitLabel?: string;
   productUnitId?: string | null;
+  customName?: string | null;
 };
 
 export type PaymentMethod = 'CASH' | 'CARD' | 'TRANSFER' | 'PENDING' | 'OTHER';
@@ -100,6 +101,7 @@ export class SaleService {
       p_amount_paid_2: input.amountPaid2 ?? null,
       p_items: input.items.map((item) => ({
         productId: item.productId,
+        customName: item.customName || null,
         unitQuantity: item.quantity,
         unitPrice: item.unitPrice,
         unitFactor: item.unitFactor ?? 1,
