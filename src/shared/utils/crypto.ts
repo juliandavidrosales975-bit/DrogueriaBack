@@ -44,7 +44,6 @@ export function caesarDecrypt(base64: string, shift: number): string {
 export type EncryptedEnvelope = {
   success?: boolean;
   encrypted: true;
-  algorithm: 'RSA-2048-ASYMMETRIC + CAESAR-CIPHER';
   rsaEnvelope: string;
   data: string;
 };
@@ -64,7 +63,6 @@ export function encryptEnvelope(dataObj: any): EncryptedEnvelope {
   return {
     success: true,
     encrypted: true,
-    algorithm: 'RSA-2048-ASYMMETRIC + CAESAR-CIPHER',
     rsaEnvelope,
     data: caesarData,
   };
